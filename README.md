@@ -3,6 +3,8 @@ This is an implementation of the model described in: **TreeBERT: A Pre-Trained M
 TreeBERT is a tree-based pre-trained model for improving programming language-oriented generation tasks. To utilize the tree structure, TreeBERT represents the AST corresponding to the code as a set of composition paths and introduces node position embedding. The model is trained by tree masked language modeling (TMLM) and node order prediction (NOP) with a hybrid objective. 
 
 The pre-trained TreeBERT can be applied to a wide range of program-oriented generation tasks and without extensive modification architecture. We have currently applied TreeBERT to two PL-oriented generation tasks: code summarization and code documentation.
+
+Full code soon.
 ## Requirements
 * Python2 (for processing the code into an AST)
 * Python3
