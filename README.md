@@ -1,6 +1,6 @@
 # TreeBERT
 
-This is an implementation of the model described in:** TreeBERT: A Tree-Based Pre-Trained Model for Programming Language**.   
+This is an implementation of the model described in: TreeBERT: A Tree-Based Pre-Trained Model for Programming Language.   
 In this paper, we propose TreeBERT, a tree-based pretrained model for programming language. TreeBERT follows the Transformer encoder-decoder architecture. To enable the Transformer to utilize the tree structure, we represent the AST corresponding to the code snippet as the set of the root node to terminal node paths as input and then introduce node position embedding to obtain the position of the node in the tree. We propose a hybrid objective applicable to AST to learn syntactic and semantic knowledge, i.e., tree masked language modeling (TMLM) and node order prediction (NOP). TreeBERT can be applied to a wide range of PL-oriented generation tasks by means of fine-tuning and without extensive modifications to the task-specific architecture.
 ## Requirements
 * python3
@@ -29,7 +29,7 @@ In code summarization, we use the Java dataset provided by [DeepCom](https://git
 ```
 python dataset/vocab.py -c /home/pretrain_data_AST/ -o data/vocab.large -f 2 -m 32000
 ```
-#### 2.Training TCBERT using GPU (no test):
+#### 2.Training TCBERT using GPU:
 ```
 python __main__.py -td /home/pretrain_data_AST_train/ -vd /home/pretrain_data_AST_test/ -v data/vocab.large -o output/treebert.model --with_cuda True
 ```
