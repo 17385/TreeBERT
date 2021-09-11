@@ -27,10 +27,7 @@ lang = {
 }
 parser = Parser()
 
-
-# github repository information storage path
 Path = "/home/pretrain_data_code/"
-# Save path of the downloaded file
 savepath = "/home/pretrain_data_AST_tmp/"
 
 AST = []
@@ -120,6 +117,7 @@ def ProcessCode(code):
         num = len(line) - len(rhs)
         if(indentationNum < num):
             tmp = abs((indentationNum-num)/4) * "INDENT " + rhs
+            
         # The indentation number of this line is smaller than the previous line, which means that the block of code is over, add "DEDENT" at the beginning of the previous line.
         elif(indentationNum > num):
             codePathList[i-1] = abs((indentationNum-num)/4) * "DEDENT " + codePathList[i-1]
@@ -128,8 +126,8 @@ def ProcessCode(code):
             tmp = rhs
         indentationNum = num
         recordIndentationNum.append(indentationNum)
-        # print('.' * (len(line) - len(rhs)) + rhs)
         codePathList.append(tmp)
+        
     # End of Code
     codePathList[-1] = abs((0 - indentationNum)/4) * "DEDENT " + codePathList[-1]
 
@@ -157,8 +155,6 @@ def getPathIndex(AST):
     paths = []
     path = []
 
-    # data = eval(data) #use with dumps to remove u
-    # Add root node
     path.append(0)
 
     GetPath(AST[0], paths, path)
@@ -268,10 +264,8 @@ def ParseToASTPath(Path, savepath, max_code_len=200, max_node_num=20, max_path_n
     fail_num = 0    
 
     for index, file in enumerate(files):
-        # num = 0
         with open(Path + file) as f1:
             
-            # open save file
             savepath_tmp = savepath + "pretrain_data_%d" % index
             f = open(savepath_tmp, "w")
             s = f1.readlines()
@@ -279,9 +273,6 @@ def ParseToASTPath(Path, savepath, max_code_len=200, max_node_num=20, max_path_n
                             desc="file %d" % (index),
                             total=len(s),
                             bar_format="{l_bar}{r_bar}"):
-                # if(num>10):
-                #     break
-                # num += 1
 
                 global code
                 line = json.loads(line)
@@ -301,8 +292,7 @@ def ParseToASTPath(Path, savepath, max_code_len=200, max_node_num=20, max_path_n
                 # code = "public void RemovePresentationFormat(){MutableSection s = (MutableSection)FirstSection;s.RemoveProperty(PropertyIDMap.PID_PRESFORMAT);}"
                 tree = parser.parse(bytes("\n".join(code), "utf8"))
                 target_code = "\n".join(code)
-
-                # Processing AST into json format, and list AST containing all ASTs
+                
                 global AST
                 AST = []
                 try:
