@@ -115,6 +115,7 @@ def ProcessCode(code):
     for i in range(len(lines)):
         line=lines[i].replace("\n", "")
         rhs = line.lstrip()
+        
         # The indentation of this line is larger than the previous line, which means that a new block of code is starting, add "INDENT" at the beginning of this line.
         num = len(line) - len(rhs)
         if(indentationNum < num):
@@ -131,8 +132,7 @@ def ProcessCode(code):
         codePathList.append(tmp)
     # End of Code
     codePathList[-1] = abs((0 - indentationNum)/4) * "DEDENT " + codePathList[-1]
-    # 无缩进的行不加NEWLINE, TODO: 这里是不是有点问题
-    # codePathList = ["NEWLINE "+codePathList[i] for i in range(len(codePathList)) if (codePathList[i] != "") and recordIndentationNum[i] != 0]
+
     targetCode = []
     for i in range(len(codePathList)):
         if (codePathList[i] != "") and recordIndentationNum[i] != 0:
