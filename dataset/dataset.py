@@ -1,183 +1,111 @@
-from torch.utils.data import Dataset
-import numpy as np
-import torch
-import random
 import json
-import copy
-import tqdm
+import os
+
+import torch
+from torch.utils.data import Dataset
+
 from dataset import BPE
 
+
 class TreeBERTDataset(Dataset):
-    def __init__(self, vocab, path_num, node_num, code_len, dataset_save_path, is_dataset_processed=True, 
-                         test_source_path=None, test_target_path=None, corpus_lines=None, is_test=False,is_fine_tune=False):
-        self.vocab = vocab
+    def __init__(self, vocab, corpus_path, path_num, node_num, code_len, 
+                        is_fine_tune=False, 
+                        corpus_lines=None, max_subtoken_len=3):
+
+        self.corpus_lines = corpus_lines
+        self.corpus_path = corpus_path
         self.path_num = path_num
-        self.node_num = node_num
         self.code_len = code_len
-        self.is_fine_tune = is_fine_tune
-        self.encoder_input = []
-        self.decoder_input = []
-        self.label = []
-        self.is_path_order = []
-        ASTs = []
-        codes = []
+        self.node_num = node_num
+        self.vocab = vocab
+        self.max_subtoken_len = max_subtoken_len
 
-        if(is_test):
-            dataset_save_path = dataset_save_path + "/TestDataset.json"
-        else:
-            dataset_save_path = dataset_save_path + "/TrainDataset.json"
+        self.files = os.listdir(corpus_path)
+        if self.corpus_lines is None:
+            self.corpus_lines = 0
+        for index, tmp_file in enumerate(self.files):
+            with open(corpus_path+tmp_file, 'r', encoding='utf-8') as f:
+                for _ in f.readlines():
+                    self.corpus_lines += 1
 
-        if(is_dataset_processed == False):
-
-            if(test_source_path != None and test_target_path != None):
-                with open(test_source_path, "r", encoding='utf-8') as f:  
-                    for paths in tqdm.tqdm(f, desc="Loading Source Dataset"):
-                        path = paths.split("\t")
-                        path_list = []
-                        for nodes in path:
-                            node_list = []
-                            for tmp in nodes.replace("|", " ").replace("\/?", "").replace("/", " / ").split():
-                                tmp = tmp + '</w>'
-                                node_list.append(tmp)
-                            node_list = BPE.encode(vocab.vocab_tokenization,vocab.tokenize_word,vocab.sorted_tokens,texts=node_list)
-                            if(len(node_list) > 2):
-                                path_list.append(node_list)
-                        ASTs.append(path_list)
-
-                with open(test_target_path, "r", encoding='utf-8') as f:
-                    for code in tqdm.tqdm(f, desc="Loading Dataset"):
-                        tmp_tokens = []
-                        for tmp in code.split():
-                            tmp = tmp + '</w>'
-                            tmp_tokens.append(tmp)
-
-                        code = BPE.encode(vocab.vocab_tokenization,vocab.tokenize_word,vocab.sorted_tokens,texts=tmp_tokens)
-                        codes.append(code)
-            else:
-                ASTs = vocab.ASTs
-                codes = vocab.codes
-
-            # Temporary save to file
-            with open(dataset_save_path, "w", encoding="utf-8") as f:
-                for index, AST in enumerate(ASTs):
-                    t, is_path_order = self.change_node(ASTs[index])
-                    AST, code, token_list = self.PMLM(t, codes[index])
-                    self.encoder_input.append(AST)
-                    self.decoder_input.append(code)
-                    self.label.append(token_list)
-                    self.is_path_order.append(is_path_order)
-                    
-                    output = {"encoder_input": AST,
-                    "decoder_input":  code,
-                    "label": token_list,
-                    "is_path_order": is_path_order}
-                    f.write(json.dumps(output))
-                    f.write("\n")
-
-        else:
-            # If the dataset has already been processed, read the file directly.
-            with open(dataset_save_path, "r", encoding="utf-8") as f:
-                for data in tqdm.tqdm(f, desc="Loading Processed Dataset", total=corpus_lines):
-                    data = json.loads(data)
-                    self.encoder_input.append(data["encoder_input"])
-                    self.decoder_input.append(data["decoder_input"])
-                    self.label.append(data["label"])
-                    self.is_path_order.append(data["is_path_order"])
-        
-
-        self.source_corpus_lines = len(self.encoder_input)
-        self.target_corpus_lines = len(self.decoder_input)              
-
+        # Start the first file
+        self.file_index = 0
+        self.file = open(corpus_path+self.files[self.file_index], 'r', encoding='utf-8')
+                
     def __len__(self):
-        return self.target_corpus_lines
+        return self.corpus_lines
 
     def __getitem__(self, item):
-        code = [self.vocab.sos_index] + self.decoder_input[item] + [self.vocab.eos_index]
-        token_list = [self.vocab.sos_index] + self.label[item] + [self.vocab.eos_index]
+        line = self.get_corpus_line()
+        data = json.loads(line)
+        lan_type = data['lan_type']
+        AST = data['encoder_input'][:self.path_num]
+        code_mask = data['decoder_input'][:self.code_len]
+        code = data['decoder_output'][:self.code_len]
+        coeff = data['node_pos_em_coeff'][:self.path_num]
 
-        # padding 
-        AST = self.encoder_input[item][:self.path_num]
-        if(len(AST) < self.path_num):
-            tmp = [self.vocab.pad_index for _ in range(self.node_num)]
-            padding = [tmp for _ in range(self.path_num - len(AST))]
-            AST.extend(padding)
-        # padding number of AST Paths
+        padding_token = [self.vocab.pad_index for _ in range(self.max_subtoken_len)]
+        padding_path = [padding_token for _ in range(self.node_num)]
+        padding_coeff = [0 for _ in range(self.node_num)]
+
         for index, path in enumerate(AST):
-            if(len(path) >= self.node_num):
-                AST[index] = path[:self.node_num]
-            else:
-                padding = [self.vocab.pad_index for _ in range(self.node_num - len(path))]
-                AST[index].extend(padding)
+            path = BPE.encode(self.vocab.vocab_tokenization,self.vocab.tokenize_word,self.vocab.sorted_tokens,texts=path[:self.node_num])
+            for i, token in enumerate(path):
+                for j, subtoken in enumerate(token):
+                    path[i][j] = self.vocab.stoi.get(subtoken, self.vocab.unk_index)
 
-        # padding length of decoder inputs and outputs
-        code = code[:self.code_len]
-        if(len(code) < self.code_len):
-            padding = [self.vocab.pad_index for _ in range(self.code_len - len(code))]
-            code.extend(padding)
+            # Padding to the same number of nodes per path
+            if(len(path)<self.node_num):
+                padding1 = [padding_token for _ in range(self.node_num - len(path))]
+                padding2 = [0 for _ in range(self.node_num - len(coeff[index]))]
+                path.extend(padding1)
+                coeff[index].extend(padding2)
+                
+            AST[index] = path                   
+        
+        # Padding to the same number of paths per AST
+        if(len(AST)<self.path_num):
+            padding1 = [padding_path for _ in range(self.path_num-len(AST))]
+            padding2 = [padding_coeff for _ in range(self.path_num-len(AST))]
+            AST.extend(padding1)
+            coeff.extend(padding2)
 
-        token_list = token_list[:self.code_len]
-        if(len(token_list) < self.code_len):
-            padding = [self.vocab.pad_index for _ in range(self.code_len - len(token_list))]
-            token_list.extend(padding)
+            
+        for i, token in enumerate(code):
+            code[i] = self.vocab.stoi.get(token.lower() + '</w>', self.vocab.unk_index)
+            code_mask[i] = self.vocab.stoi.get(code_mask[i].lower() + '</w>', self.vocab.unk_index)
 
-        if(self.is_fine_tune == False):
-            output = {"encoder_input": AST,
-                    "decoder_input":  code,
-                    "label": token_list,
-                    "is_path_order": self.is_path_order[item]}
+        # Padding to the same length of code
+        padding = [self.vocab.pad_index for _ in range(self.code_len - len(code))]
+        code_mask.extend(padding)
+        code.extend(padding)
+
+        # add <sos> and <eos>
+        if(lan_type=="py"):
+            sos_token = self.vocab.sos_index_python
+        elif(lan_type=="java"):
+            sos_token = self.vocab.sos_index_java
         else:
-            output = {"encoder_input": AST,
-                  "label": token_list}
-                  
+            sos_token = self.vocab.unk_index
+
+        code_mask = [sos_token] + code_mask + [self.vocab.cls_index]
+        code = code + [self.vocab.cls_index] + [self.vocab.eos_index]
+
+        output = {"encoder_input": AST,
+                "decoder_input":  code_mask,
+                "decoder_output": code,
+                "is_ast_order": data['is_ast_order'],
+                "node_pos_em_coeff": coeff}
+        
         return {key: torch.tensor(value) for key, value in output.items()}
 
-    def PMLM(self, AST, code):
-        mask_node = []
-        if(self.is_fine_tune == False):
-            # AST path disrupted, up to mask 0.15 nodes
-            max_mask_num = len(AST) * len(AST[0]) * 0.15
-            random.shuffle(AST)
-            for path in AST:
-                d = len(path)
-                tmp = np.array(range(d))
-                select_node_prob_dis = np.exp(tmp-d) / np.sum(np.exp(tmp-d))
+    def get_corpus_line(self):
+        line = self.file.readline()
 
-                for index, node in enumerate(path):
-                    prob = random.random()
-                    if (prob < select_node_prob_dis[index]) and (len(mask_node) < max_mask_num):
-                        mask_node.append(path[index])
-                        path[index] = "<mask>"
-     
-        # Decoder Inputs and Outputs
-        token_list = []
-        for m, token in enumerate(code):
-            token_list.append(self.vocab.stoi.get(token, self.vocab.unk_index))
-            if(self.is_fine_tune == False):
-                if (token not in mask_node):
-                    code[m] = self.vocab.mask_index
-                else:
-                    code[m] = self.vocab.stoi.get(token, self.vocab.unk_index)
-
-        # Encoder Inputs
-        for m, path in enumerate(AST):
-            for n, node in enumerate(path):
-                AST[m][n] = self.vocab.stoi.get(node, self.vocab.unk_index)
-            
-        return AST, code, token_list
-
-    def change_node(self, AST):
-        t = copy.deepcopy(AST) 
-
-        # output_text, label(disorder:0, order:1)
-        # AST has 0.5 probability of exchanging nodes
-        if(self.is_fine_tune == False):
-            if random.random() > 0.5:
-                    return t, 1
-            else:
-                # Randomly select a path
-                path = t[random.randint(0, len(t)-1)]
-                path = t[random.randint(0, len(t)-1)]
-                position = random.sample(range(0,len(path)-1), 2)
-                path[position[0]], path[position[1]] = path[position[1]], path[position[0]]
-                return t, 0
-        return t, 0
+        # start reading the next file
+        if line is '':
+            self.file.close()
+            self.file_index = (self.file_index + 1) % len(self.files)
+            self.file = open(self.corpus_path+self.files[self.file_index], "r", encoding='utf-8')
+            line = self.file.readline()
+        return line

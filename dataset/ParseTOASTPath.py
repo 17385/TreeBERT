@@ -1,207 +1,113 @@
-import sys
-import json as json
-import ast
-import sys
-import json
+# coding=UTF-8
+# This Python file uses the following encoding: utf-8
+
+# for pre-train (python and java)
+
 import copy
+import json
+import json as json
+import os
+import random
 import re
+import sys
+
+import numpy as np
 from tqdm import tqdm
-
-def is_json(myjson):
-    try:
-        json_object = json.loads(myjson)
-    except ValueError:
-        return False
-    return True
-
-def PrintUsage():
-    sys.stderr.write("""
-Usage:
-    parse_python.py <file>
-
-""")
-    exit(1)
-
-def read_file_to_string(filename):
-    f = open(filename, 'rt')
-    s = f.read()
-    f.close()
-    return s
-
-def parseCode(code):
-    tree = ast.parse(code)
-    
-    json_tree = []
-    def gen_identifier(identifier, node_type = 'identifier'):
-        pos = len(json_tree)
-        json_node = {}
-        json_tree.append(json_node)
-        json_node['type'] = node_type
-        json_node['value'] = identifier
-        return pos
-    
-    def traverse_list(l, node_type = 'list'):
-        pos = len(json_tree)
-        json_node = {}
-        json_tree.append(json_node)
-        json_node['type'] = node_type
-        children = []
-        for item in l:
-            children.append(traverse(item))
-        if (len(children) != 0):
-            json_node['children'] = children
-        return pos
-        
-    def traverse(node):
-        pos = len(json_tree)
-        json_node = {}
-        json_tree.append(json_node)
-        json_node['type'] = type(node).__name__
-        children = []
-        if isinstance(node, ast.Name):
-            json_node['value'] = node.id
-        elif isinstance(node, ast.Num):
-            json_node['value'] = unicode(node.n)
-        elif isinstance(node, ast.Str):
-            json_node['value'] = node.s.decode('utf-8')
-        elif isinstance(node, ast.alias):
-            json_node['value'] = unicode(node.name)
-            if node.asname:
-                children.append(gen_identifier(node.asname))
-        elif isinstance(node, ast.FunctionDef):
-            json_node['value'] = unicode(node.name)
-        elif isinstance(node, ast.ClassDef):
-            json_node['value'] = unicode(node.name)
-        elif isinstance(node, ast.ImportFrom):
-            if node.module:
-                json_node['value'] = unicode(node.module)
-        elif isinstance(node, ast.Global):
-            for n in node.names:
-                children.append(gen_identifier(n))
-        elif isinstance(node, ast.keyword):
-            json_node['value'] = unicode(node.arg)
-        
-
-        # Process children.
-        if isinstance(node, ast.For):
-            children.append(traverse(node.target))
-            children.append(traverse(node.iter))
-            children.append(traverse_list(node.body, 'body'))
-            if node.orelse:
-                children.append(traverse_list(node.orelse, 'orelse'))
-        elif isinstance(node, ast.If) or isinstance(node, ast.While):
-            children.append(traverse(node.test))
-            children.append(traverse_list(node.body, 'body'))
-            if node.orelse:
-                children.append(traverse_list(node.orelse, 'orelse'))
-        elif isinstance(node, ast.With):
-            children.append(traverse(node.context_expr))
-            if node.optional_vars:
-                children.append(traverse(node.optional_vars))
-            children.append(traverse_list(node.body, 'body'))
-        elif isinstance(node, ast.TryExcept):
-            children.append(traverse_list(node.body, 'body'))
-            children.append(traverse_list(node.handlers, 'handlers'))
-            if node.orelse:
-                children.append(traverse_list(node.orelse, 'orelse'))
-        elif isinstance(node, ast.TryFinally):
-            children.append(traverse_list(node.body, 'body'))
-            children.append(traverse_list(node.finalbody, 'finalbody'))
-        elif isinstance(node, ast.arguments):
-            children.append(traverse_list(node.args, 'args'))
-            children.append(traverse_list(node.defaults, 'defaults'))
-            if node.vararg:
-                children.append(gen_identifier(node.vararg, 'vararg'))
-            if node.kwarg:
-                children.append(gen_identifier(node.kwarg, 'kwarg'))
-        elif isinstance(node, ast.ExceptHandler):
-            if node.type:
-                children.append(traverse_list([node.type], 'type'))
-            if node.name:
-                children.append(traverse_list([node.name], 'name'))
-            children.append(traverse_list(node.body, 'body'))
-        elif isinstance(node, ast.ClassDef):
-            children.append(traverse_list(node.bases, 'bases'))
-            children.append(traverse_list(node.body, 'body'))
-            children.append(traverse_list(node.decorator_list, 'decorator_list'))
-        elif isinstance(node, ast.FunctionDef):
-            children.append(traverse(node.args))
-            children.append(traverse_list(node.body, 'body'))
-            children.append(traverse_list(node.decorator_list, 'decorator_list'))
-        else:
-            # Default handling: iterate over children.
-            # ast.iter_child_nodes:Yield all direct child nodes of node, that is, all fields that are nodes and all items of fields that are lists of nodes.
-            for child in ast.iter_child_nodes(node):
-                if isinstance(child, ast.expr_context) or isinstance(child, ast.operator) or isinstance(child, ast.boolop) or isinstance(child, ast.unaryop) or isinstance(child, ast.cmpop):
-                    # Directly include expr_context, and operators into the type instead of creating a child.
-                    json_node['type'] = json_node['type'] + type(child).__name__
-                else:
-                    children.append(traverse(child))
-                
-        if isinstance(node, ast.Attribute):
-            children.append(gen_identifier(node.attr, 'attr'))
-                
-        if (len(children) != 0):
-            json_node['children'] = children
-        return pos
-    
-    traverse(tree)
-    return json.dumps(json_tree, separators=(',', ':'), ensure_ascii=False)
-
-def SaveToFile(filename, contents):
-    f = open(filename, 'w')
-    for index, content in enumerate(contents):
-        try:
-            f.write(content)
-            f.write('\n')
-        except:
-            print(index)
-            print(content)
-    f.close()
-
-def GetPaths(AST):
-    paths = []
-    path = []
-    global data 
-    data = json.loads(AST)
-    # data = eval(data)
-    path.append(data[0].get("type"))
-
-    GetPath(data[0], paths, path)
-    return paths
-
-def ReadCodePathList(filename, fileNum=100000):
-    f =open(filename, "r")
-    line = f.readline()
-    codePathList = []
-    while(fileNum > 0):
-        line=line.strip('\n')
-        codePathList.append(line)
-        fileNum = fileNum - 1
-        line = f.readline()
-    f.close()
-    return codePathList
+from tree_sitter import Language, Parser
 
 
-def GetPath(node, paths, path):
-    
-    if node.has_key('children'):
-        children = node.get('children') ##chiledren list 
-        for i in children:
-            child = data[i]
-            if child.has_key('value'):
-                path.append(((child.get('value')).replace('\n',' ')).replace('\t',' '))
-            elif child.has_key('type'):
-                path.append(child.get('type'))
-            GetPath(child, paths, path)
-        path.pop()
+CS_LANGUAGE = Language('build_parser/languages_java_py_cs.so', 'c_sharp')
+JA_LANGUAGE = Language('build_parser/languages_java_py_cs.so', 'java')
+PY_LANGUAGE = Language('build_parser/languages_java_py_cs.so', 'python')
+
+lang = {
+    "py" : PY_LANGUAGE,
+    "java" : JA_LANGUAGE,
+    "cs" : CS_LANGUAGE
+}
+parser = Parser()
+
+
+# github repository information storage path
+Path = "/home/pretrain_data_code/"
+# Save path of the downloaded file
+savepath = "/home/pretrain_data_AST_tmp/"
+
+AST = []
+queue = []
+parentQueue = []
+code = []
+class TailRecurseException(BaseException):
+  def __init__(self, args, kwargs):
+    self.args = args
+    self.kwargs = kwargs
+
+def tail_call_optimized(g):
+  """
+  This function decorates a function with tail call
+  optimization. It does this by throwing an exception
+  if it is it's own grandparent, and catching such
+  exceptions to fake the tail call optimization.
+  
+  This function fails if the decorated
+  function recurses in a non-tail context.
+  """
+  def func(*args, **kwargs):
+    f = sys._getframe()
+    if f.f_back and f.f_back.f_back \
+        and f.f_back.f_back.f_code == f.f_code:
+      raise TailRecurseException(args, kwargs)
     else:
-        tempPath = copy.deepcopy(path)
-        path.pop()
-        paths.append("|".join(tempPath))
+      while 1:
+        try:
+          return g(*args, **kwargs)
+        except TailRecurseException as e:
+          args = e.args
+          kwargs = e.kwargs
+  func.__doc__ = g.__doc__
+  return func
 
+def getNodeValue(code, start_point, end_point):
+    if start_point[0]==end_point[0]:
+        value=code[start_point[0]][start_point[1]:end_point[1]]
+    else:
+        value=""
+        value+=code[start_point[0]][start_point[1]:]
+        for i in range(start_point[0]+1,end_point[0]):
+            value+=code[i]
+        value+=code[end_point[0]][:end_point[1]]   
+    return value
+
+@tail_call_optimized
+def getAST(node, parentIndex=-1):
+    index = len(AST)
+
+    queue.extend(node.children)
+    parentQueue.extend([index for _ in range(len(node.children))])
+
+    json_node = {}
+
+    # If there is no child node, value will be taken
+    if(len(node.children)==0):
+        value = getNodeValue(code, node.start_point, node.end_point)
+        json_node["value"] = value
+
+    json_node["type"] = node.type
+    json_node["children"] = []
+    if(parentIndex!=-1):
+        AST[parentIndex]["children"].append(index)
+
+    AST.append(json_node)
+
+    if(len(queue)==0):
+        return
+    return getAST(queue.pop(0), parentIndex=parentQueue.pop(0))
 
 def ProcessCode(code):
+    """
+    Delete blank lines
+    Processing code blocks, INDENT represents the beginning of the block and DEDENT represents the end of the block.
+    """
     lines = code.split("\n")
     codePathList = []
     indentationNum = 0
@@ -209,9 +115,11 @@ def ProcessCode(code):
     for i in range(len(lines)):
         line=lines[i].replace("\n", "")
         rhs = line.lstrip()
+        # The indentation of this line is larger than the previous line, which means that a new block of code is starting, add "INDENT" at the beginning of this line.
         num = len(line) - len(rhs)
         if(indentationNum < num):
             tmp = abs((indentationNum-num)/4) * "INDENT " + rhs
+        # The indentation number of this line is smaller than the previous line, which means that the block of code is over, add "DEDENT" at the beginning of the previous line.
         elif(indentationNum > num):
             codePathList[i-1] = abs((indentationNum-num)/4) * "DEDENT " + codePathList[i-1]
             tmp =  rhs
@@ -221,8 +129,10 @@ def ProcessCode(code):
         recordIndentationNum.append(indentationNum)
         # print('.' * (len(line) - len(rhs)) + rhs)
         codePathList.append(tmp)
- 
+    # End of Code
     codePathList[-1] = abs((0 - indentationNum)/4) * "DEDENT " + codePathList[-1]
+    # 无缩进的行不加NEWLINE, TODO: 这里是不是有点问题
+    # codePathList = ["NEWLINE "+codePathList[i] for i in range(len(codePathList)) if (codePathList[i] != "") and recordIndentationNum[i] != 0]
     targetCode = []
     for i in range(len(codePathList)):
         if (codePathList[i] != "") and recordIndentationNum[i] != 0:
@@ -232,143 +142,217 @@ def ProcessCode(code):
     
     return " ".join(targetCode)
 
-
-def DeleteComment(s):   
-    s = re.sub(r'(#.*)', '', s)
-    s= re.sub(r'(\'\'\')[\s\S]*?(\'\'\')', "", s, re.S)
-    s= re.sub(r'(\"\"\")[\s\S]*?(\"\"\")', "", s, re.S)
+# Remove comments from the code, taking care before converting to AST.
+def DeleteComment(s, code_type): 
+    if(code_type=="py"): 
+        s = re.sub(r'(#.*)', '', s)
+        s= re.sub(r'(\'\'\')[\s\S]*?(\'\'\')', "", s, re.S)
+        s= re.sub(r'(\"\"\")[\s\S]*?(\"\"\")', "", s, re.S)
+    if(code_type=="java") or (code_type=="cs"): 
+        s = re.sub(r'(\/\/.*)', '', s)
+        s= re.sub(r'(\/\*)[\s\S]*?(\*\/)', "", s, re.S)
     return s
 
-def processCodeFile(codeFilePath, ASTSavePath, PathSavePath, targetCodeSavePath):
-    ASTS = []
-    codePathList = ReadCodePathList(codeFilePath, fileNum=10000)
-    targetCodes = []
-    uncompileNum = 0
-    for codePath in tqdm(codePathList):
-        try:
-            f = open(codePath, 'rt')
-            s = f.read()
+def getPathIndex(AST):
+    paths = []
+    path = []
+
+    # data = eval(data) #use with dumps to remove u
+    # Add root node
+    path.append(0)
+
+    GetPath(AST[0], paths, path)
+    return paths
+
+def GetPath(node, paths, path):
+    '''
+    Recursively get the root-terminal path from the parsed AST
+    '''
+    if len(node["children"])!=0:
+        children = node.get('children')
+        for i in children:
+            child = AST[i]
+            path.append(i)
+            GetPath(child, paths, path)
+        path.pop()
+    else:
+        tempPath = copy.deepcopy(path)
+        path.pop()
+        paths.append(tempPath)
+
+def myreplace(matched):
+    return " " + matched.group(0) + " "
+
+def TMLM(AST,pathIndex,code):
+    decoder_input = []
+    decoder_output = []
+    AST_mask_nodes = []
+
+    # mask AST at encoder
+    for path in pathIndex:
+        p = len(path)
+        q = np.array(range(p))
+        select_node_pro_dis = np.exp(q-p) / np.sum(np.exp(q-p))
+        for index, node in enumerate(path):
+            if (random.random()<select_node_pro_dis[index])and(random.random()<0.15):
+                if (index == len(path)-1):
+                    try:
+                        mask_node = AST[node].get('value').replace("\n", "").replace("\t", " ").replace("\/?", "").replace("\\", "")
+                        mask_node = re.sub(r"[\W]", myreplace, mask_node)
+                        mask_node = mask_node.split()
+                    except:
+                        mask_node = [AST[node].get('type')]
+
+                    AST_mask_nodes.extend(mask_node)
+                AST[node]['type'] = '<mask>'
+                if 'value' in AST[node].keys():
+                    AST[node]['value'] = '<mask>'
+
+    # mask code at decoder
+    code = code.replace("\n", "").replace("\t", " ").replace("\/?", "").replace("\\", "")
+    code = re.sub(r"[\W]", myreplace, code)
+    decoder_output = code.split()
+    for index, token in enumerate(decoder_output):
+        if(token not in AST_mask_nodes):
+            decoder_input.append("<mask>")
+        else:
+            decoder_input.append(token)
+
+    return AST, decoder_input, decoder_output
+
+def NOP(AST):
+    if random.random() > 0.5:
+        return AST, 1
+    else:
+        position = random.sample(range(0,len(AST)),2)
+        AST[position[0]]['type'], AST[position[1]]['type'] = AST[position[1]]['type'], AST[position[0]]['type']
+        if ('value' in AST[position[0]].keys()) and ('value' in AST[position[1]].keys()):
+            AST[position[0]]['value'], AST[position[1]]['value'] = AST[position[1]]['value'], AST[position[0]]['value']
+        return AST, 0
+
+def getNodePosEmCoeff(AST):
+    AST[0]['coeff'] = 0.5
+    for parent in AST:
+        children = parent.get('children')
+        if len(children)>0:
+            children = parent.get('children')
+            c  = len(children)
+            for i, child in enumerate(children):
+                coeff = (c-i)/(c+1.0)
+                AST[child]['coeff'] = coeff
+    return AST
+
+def truncatCode(code, max_code_len):
+    trunc_code = []
+    token_num = 0
+    code = code.split('\n')
+    for line in code:
+        tmp_tokens = []
+        line = line.split()
+        for token in line:
+            tmp_tokens.append(token)
+            token_num +=1
+            if token_num>200:
+                break
+        str = " ".join(tmp_tokens)
+        # Determine if it is a blank line
+        if not len(line):
+            continue
+        trunc_code.append(str)
+        if token_num>200:
+            break
+    return trunc_code
+
+def ParseToASTPath(Path, savepath, max_code_len=200, max_node_num=20, max_path_num=100):
+    files= os.listdir(Path)
+    fail_num = 0    
+
+    for index, file in enumerate(files):
+        # num = 0
+        with open(Path + file) as f1:
+            
+            # open save file
+            savepath_tmp = savepath + "pretrain_data_%d" % index
+            f = open(savepath_tmp, "w")
+            s = f1.readlines()
+            for line in tqdm(s,
+                            desc="file %d" % (index),
+                            total=len(s),
+                            bar_format="{l_bar}{r_bar}"):
+                # if(num>10):
+                #     break
+                # num += 1
+
+                global code
+                line = json.loads(line)
+                try:
+                    code = line["content"]
+                    code_type =line['filepath'].split(".")[-1]
+                except:
+                    fail_num += 1
+                    continue
+                parser.set_language(lang[code_type])
+
+                # Processing Code
+                code = DeleteComment(code,code_type)
+                # target_code = ProcessCode(target_code)
+                code = truncatCode(code, max_code_len)
+                
+                # code = "public void RemovePresentationFormat(){MutableSection s = (MutableSection)FirstSection;s.RemoveProperty(PropertyIDMap.PID_PRESFORMAT);}"
+                tree = parser.parse(bytes("\n".join(code), "utf8"))
+                target_code = "\n".join(code)
+
+                # Processing AST into json format, and list AST containing all ASTs
+                global AST
+                AST = []
+                try:
+                    getAST(tree.root_node, parentIndex=-1)
+                except:
+                    fail_num += 1
+                    continue
+
+                # Construct pre-training tasks
+                pathIndex = getPathIndex(AST)
+                if len(pathIndex)<2:
+                    fail_num += 1
+                    continue
+                AST, decoder_input, decoder_output = TMLM(AST,pathIndex,target_code)
+                AST, is_ast_order = NOP(AST)
+
+                # Get the node position embedding coefficient
+                getNodePosEmCoeff(AST)
+
+                # Extracting paths from the AST
+                paths = []
+                coeffs = []
+                for path in pathIndex:
+                    tmp_path = []
+                    coeff = []
+                    for index, node in enumerate(path):
+                        coeff.append(AST[node]['coeff'])
+                        if('value' in AST[node].keys()):
+                            node = AST[node].get('value').replace("\n", "").replace("\t", " ").replace("\/?", "").replace(" ", "_").replace("\\", "")
+                        else:
+                            node = AST[node].get('type')
+                        tmp_path.append(node)
+                        
+                    paths.append(tmp_path[:max_node_num])
+                    coeffs.append(coeff[:max_node_num])
+
+                # Save the pre-trained dataset constructed for TMLM and NOP to a file.
+                output = {"lan_type": code_type,
+                        "encoder_input": paths[:max_path_num],
+                        "decoder_input": decoder_input[:max_code_len],
+                        "decoder_output": decoder_output[:max_code_len],
+                        "is_ast_order": is_ast_order,
+                        "node_pos_em_coeff": coeffs[:max_path_num]}
+                f.write(json.dumps(output))
+                f.write("\n")
             f.close()
-        
-            sourceCode = DeleteComment(s)
-            targetCode = ProcessCode(sourceCode)
-            AST = parseCode(sourceCode)
-            ASTS.append(AST)   
-            targetCodes.append(targetCode)
-        except:
-              uncompileNum = uncompileNum + 1
-        
+
     
-    print("uncompile file num:", uncompileNum)
+    print("fail number:", fail_num)
 
-    SaveToFile(targetCodeSavePath, targetCodes)
-    SaveToFile(ASTSavePath, ASTS)
-
-    f = open(ASTSavePath, "r")
-    pathsTrainData = []
-    line = f.readline()
-    while line:
-        paths = GetPaths(line)
-        pathsTrainData.append("\t".join(paths))
-        line = f.readline()
-    f.close()
-
-    SaveToFile(PathSavePath, pathsTrainData)
-
-def processCodeSnippet(codePath, PathSavePath, targetCommentSavePath):
-    def getCode(filename):
-        f =open(filename, "r")
-        line = f.readline()
-        code = []
-        comment = []
-        while(line):
-            line = line.split("\t")
-            code.append(line[3])
-            comment.append(line[2])
-            line = f.readline()
-        f.close()
-        return code, comment
-    
-    codes, comments = getCode(codePath)
-    ASTS = []
-    targetCodes = []
-    label = []
-    num = 0.0
-    total_num = 0.0
-    for index, code in enumerate(codes):
-        total_num = total_num + 1.0
-        sourceCode = DeleteComment(code)
-        sourceCode = sourceCode.replace("\\n","\n")
-
-        try:
-            AST = parseCode(unicode(sourceCode))
-            if len(AST)> 200  > 50:
-                ASTS.append(unicode(AST)) 
-                label.append(comments[index])
-        except:
-            num = num + 1
-
-    print(num)       
-    print("error rate", num/total_num)
-
-    SaveToFile(targetCommentSavePath, label)
-
-    pathsTrainData = []
-    for line in ASTS:
-        paths = GetPaths(line)
-        pathsTrainData.append("\t".join(paths))
-
-    SaveToFile(PathSavePath, pathsTrainData)
-
-
-def processCodeSum(codePath, PathSavePath, targetCommentSavePath):
-    def getCode(filename):
-        f =open(filename, "r")
-        line = f.readline()
-        code = []
-        comment = []
-        while(line):
-            line = json.loads(line)
-            if line["label"].find("main") == -1:
-                code.append(line["function"])
-                comment.append(line["label"])
-            line = f.readline()
-        f.close()
-        return code, comment
-    
-    codes, comments = getCode(codePath)
-    ASTS = []
-    label = []
-    num = 0.0
-    total_num = 0.0
-    for index, code in enumerate(codes):
-        total_num = total_num + 1.0
-        sourceCode = DeleteComment(code)
-        sourceCode = sourceCode.replace("\t","")        
-        try:
-            AST = parseCode(unicode(sourceCode))
-            ASTS.append(unicode(AST)) 
-            label.append(comments[index])
-        except:
-            num = num + 1
-
-    print(num)       
-    print("error rate", num/total_num)
-
-    SaveToFile(targetCommentSavePath, label)
-    pathsTrainData = []
-    for line in ASTS:
-        paths = GetPaths(line)
-        pathsTrainData.append("\t".join(paths))
-
-    SaveToFile(PathSavePath, pathsTrainData)
-    
 
 if __name__ == "__main__":
-    
-    # processCodeFile(CODE_PATH, AST_SAVE_PATH, PATHS_TRAIN_DATA_SAVE_PATH, TARGET_CODE_SAVE_PATH)
-
-    # processCodeSnippet(CODE_PATH_1, PATHS_TRAIN_DATA_SAVE_PATH_1, TARGET_COMMENT_SAVE_PATH_1)
-
-    # processCodeSum(CODE_PATH_2, PATHS_TRAIN_DATA_SAVE_PATH_2, TARGET_COMMENT_SAVE_PATH_2)
-    pass
+    ParseToASTPath(Path,savepath,max_code_len=200, max_node_num=20, max_path_num=100)

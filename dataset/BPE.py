@@ -6,11 +6,8 @@ class BPE(object):
         print("Adopt BPE")
         vocab = self.get_vocab(sourceFile, targetFile)
 
-        # print('Tokens Before BPE')
         self.tokens_frequencies, self.vocab_tokenization = self.get_tokens_from_vocab(vocab)
-        # print('All tokens: {}'.format(self.tokens_frequencies.keys()))
-        # print('Number of tokens: {}'.format(len(self.tokens_frequencies.keys())))
-        # print('==========')
+
         for i in range(num_merges):
             pairs = self.get_stats(vocab)
             if not pairs:
@@ -21,35 +18,41 @@ class BPE(object):
                 print('Iter: {}'.format(i))
                 print('Number of tokens: {}'.format(len(self.tokens_frequencies.keys())))
                 print('==========')
-            # print('Best pair: {}'.format(best))
+
             self.tokens_frequencies, self.vocab_tokenization = self.get_tokens_from_vocab(vocab)
-            # print('All tokens: {}'.format(self.tokens_frequencies.keys()))
 
         sorted_tokens_tuple = sorted(self.tokens_frequencies.items(), key=lambda item: (self.measure_token_length(item[0]), item[1]), reverse=True)
         self.sorted_tokens = [token for (token, freq) in sorted_tokens_tuple]
 
-        # print(self.sorted_tokens)
         print('==========')
 
 
     @staticmethod
-    def encode(vocab_tokenization, tokenize_word, sorted_tokens, texts):
+    def encode(vocab_tokenization, tokenize_word, sorted_tokens, texts, max_subtoken_len=3):
         encode_output = []
         for word_given in texts:
-            # Tokenization of the known word
+            word_given = word_given.lower() + '</w>'
+
             if word_given in vocab_tokenization:
                 tmpWord = vocab_tokenization[word_given]
-            # Tokenizating of the unknown word
-            else:
-                tmpWord = tokenize_word(string=word_given, sorted_tokens=sorted_tokens, unknown_token='<unk>')
-            encode_output = encode_output + tmpWord
-        return encode_output
 
+            else:
+                if(word_given=="<mask>"):
+                    tmpWord = ["<mask></w>"]
+                else:
+                    tmpWord = tokenize_word(string=word_given, sorted_tokens=sorted_tokens, unknown_token='<unk></w>')
+
+            tmpWord = tmpWord[:max_subtoken_len]
+            if (len(tmpWord)<max_subtoken_len):
+                padding = ["<pad></w>" for _ in range(max_subtoken_len-len(tmpWord))]
+                tmpWord.extend(padding)
+            encode_output.append(tmpWord) 
+        return encode_output
         
     @staticmethod
     def decode():
         '''
-        concatenate all the tokens together and replace "<\w> with space
+        TODO: concatenate all the tokens together and replace "<\w> with space
         '''
         pass
 
@@ -127,8 +130,3 @@ class BPE(object):
             string_tokens += self.tokenize_word(string=remaining_substring, sorted_tokens=sorted_tokens[i+1:], unknown_token=unknown_token)
             break
         return string_tokens
-
-
-
-# BPEObject = BPE(sourceFile='data/SourcePath.txt', targetFile='data/TargetCode.txt')
-# print("test BPE")

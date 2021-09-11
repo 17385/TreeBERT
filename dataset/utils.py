@@ -1,13 +1,88 @@
-import torch
-import torch.nn as nn
-
-from torchtext.data.metrics import bleu_score
+import base64
+import json
+import os
+import random
+import socket
+import sys
+import time
+from urllib import request
 
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
-
+# from torchtext.data.metrics import bleu_score
+import torch
+import torch.nn as nn
 import tqdm
 
+
+def getPretrainData(str):
+    socket.setdefaulttimeout(30)
+    repos = json.loads(str)
+    url = repos['url']
+
+    filename = repos['filepath'].split("/")[-1]
+    code_type = filename.split(".")[-1]
+
+    ua_headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/71.0.3578.98 Safari/537.36"}
+
+    
+    try:
+        req = request.Request(url, headers=ua_headers)
+        response = request.urlopen(req)
+        content = response.read()
+        content = json.loads(content)
+        code = base64.b64decode(content["content"])
+        code = code.decode('utf-8')
+    except:
+        count = 1
+        while count <= 3:
+            time.sleep(10)
+            print("Retrying ", count)
+            try:
+                response =  request.urlopen(url)
+                code = response.read()
+                code = code.decode('utf-8')                                           
+                break
+            except:
+                count += 1
+        if count > 3:
+            code = None
+            print("Crawl code failure")
+    
+    return code, code_type
+
+def SaveToFile(filename, contents):
+    f = open(filename, 'w')
+    for index, content in enumerate(contents):
+        try:
+            f.write(content)
+            f.write('\n')
+        except:
+            print(index)
+            print(content)
+    f.close()
+
+def is_json(myjson):
+    try:
+        json_object = json.loads(myjson)
+    except ValueError:
+        return False
+    return True
+
+def PrintUsage():
+    # Output error message
+    sys.stderr.write("""
+        Usage:
+            parse_python.py <file>
+
+        """)
+    exit(1)
+
+def read_file_to_string(filename):
+    f = open(filename, 'rt')
+    s = f.read()
+    f.close()
+    return s
 
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -40,12 +115,19 @@ def train(model, iterator, optimizer, criterion, clip):
                     torch.cuda.empty_cache()
             else:
                 raise exception
-  
+ 
+                
+        #output = [batch size, trg len - 1, output dim]
+        #trg = [batch size, trg len]
+            
         output_dim = output.shape[-1]
             
         output = output.contiguous().view(-1, output_dim)
         trg = trg[:,1:].contiguous().view(-1)
-    
+                
+        #output = [batch size * trg len - 1, output dim]
+        #trg = [batch size * trg len - 1]
+            
         loss = criterion(output, trg)
         
         loss.backward()
@@ -72,12 +154,18 @@ def evaluate(model, iterator, criterion):
             trg = batch.trg
 
             output, _ = model(src, trg[:,:-1])
- 
+            
+            #output = [batch size, trg len - 1, output dim]
+            #trg = [batch size, trg len]
+            
             output_dim = output.shape[-1]
             
             output = output.contiguous().view(-1, output_dim)
             trg = trg[:,1:].contiguous().view(-1)
-
+            
+            #output = [batch size * trg len - 1, output dim]
+            #trg = [batch size * trg len - 1]
+            
             loss = criterion(output, trg)
 
             epoch_loss += loss.item()

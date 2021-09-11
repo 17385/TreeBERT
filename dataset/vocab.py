@@ -1,13 +1,22 @@
+#coding=utf-8
+
+import collections
+import json
+import os
 import pickle
-import tqdm
-import re, collections
+import re
+
+from tqdm import tqdm
+
 
 class BPE(object):
-    def __init__(self, sourceFile, targetFile, BPE_path, num_merges=5):
+    def __init__(self, corpus_path, BPE_path="data/BPEObject.small", except_list=None, num_merges=5):
+        print("Read in files")
+        print('==========')
+        vocab = self.get_vocab(corpus_path, except_list)
+        # self.tokens_frequencies, self.vocab_tokenization = self.get_tokens_from_vocab(vocab)
         print('==========')
         print("Adopt BPE")
-        vocab = self.get_vocab(sourceFile, targetFile)
-        self.tokens_frequencies, self.vocab_tokenization = self.get_tokens_from_vocab(vocab)
         for i in range(num_merges):
             pairs = self.get_stats(vocab)
             if not pairs:
@@ -16,14 +25,13 @@ class BPE(object):
             vocab = self.merge_vocab(best, vocab)
             if(i % 100 == 0):
                 print('Iter: {}'.format(i))
-                print('Number of tokens: {}'.format(len(self.tokens_frequencies.keys())))
+            # print('Number of tokens: {}'.format(len(self.tokens_frequencies.keys())))
                 print('==========')
-            self.tokens_frequencies, self.vocab_tokenization = self.get_tokens_from_vocab(vocab)
+
+        self.tokens_frequencies, self.vocab_tokenization = self.get_tokens_from_vocab(vocab)
 
         sorted_tokens_tuple = sorted(self.tokens_frequencies.items(), key=lambda item: (self.measure_token_length(item[0]), item[1]), reverse=True)
         self.sorted_tokens = [token for (token, freq) in sorted_tokens_tuple]
-
-        self.save_BPE(BPE_path)
         
         print('==========')
 
@@ -33,6 +41,7 @@ class BPE(object):
         encode_output = []
         for word_given in texts:
             # Tokenization of the known word
+            word_given = word_given.lower() + '</w>'
             if word_given in vocab_tokenization:
                 tmpWord = vocab_tokenization[word_given]
             # Tokenizating of the unknown word
@@ -54,20 +63,29 @@ class BPE(object):
         with open(BPE_path, "wb") as f:
             pickle.dump(self, f)
 
-    def get_vocab(self, sourceFile, targetFile):
+    def get_vocab(self, corpus_path, except_list):
         vocab = collections.Counter()
-        # Processing AST paths
-        with open(sourceFile, 'r', encoding='utf-8') as fhand:
-            for line in fhand:
-                words = line.replace("\n", "").replace("\t", " ").replace("|", " ").replace("\/?", "").replace("/", " / ").split()
-                for word in words:
-                    vocab[' '.join(list(word)) + ' </w>'] += 1
-        # Processing code
-        with open(targetFile, 'r', encoding='utf-8') as fhand:
-            for line in fhand:
-                words = line.replace("\n", "").replace("\t", " ").replace("\/?", "").replace("/", " / ").split()
-                for word in words:
-                    vocab[' '.join(list(word)) + ' </w>'] += 1
+        files= os.listdir(corpus_path)
+
+        for index, file in enumerate(files):   
+            with open(corpus_path+file, 'r', encoding='utf-8') as f:
+                s = f.readlines()
+                for line in tqdm(s,
+                            desc="file %d" % (index),
+                            total=len(s),
+                            bar_format="{l_bar}{r_bar}"):
+                    data = json.loads(line)
+                    AST = data['encoder_input']
+                    code = data['decoder_output']
+                    for path in AST:
+                        for node in path:
+                            if (node in except_list):
+                                vocab[node.lower() + '</w>'] += 1
+                            else:
+                                vocab[' '.join(list(node.lower())) + ' </w>'] += 1
+                    for token in code:
+                        vocab[token.lower() + '</w>'] += 1
+
         return vocab
 
     def get_stats(self, vocab):
@@ -221,10 +239,13 @@ class Vocab(TorchVocab):
     def __init__(self, counter, max_size=None, min_freq=1):
         self.pad_index = 0
         self.unk_index = 1
-        self.eos_index = 2
-        self.sos_index = 3
-        self.mask_index = 4
-        super().__init__(counter, specials=["<pad>", "<unk>", "<eos>", "<sos>", "<mask>"],
+        self.sos_index_python = 2
+        self.sos_index_java = 3
+        self.eos_index = 4
+        self.mask_index = 5
+        self.cls_index = 6
+        # <mask> is automatically included when creating a vocab
+        super().__init__(counter, specials=["<pad></w>", "<unk></w>", "<sosp></w>", "<sosj></w>","<eos></w>", "<cls></w>"],
                          max_size=max_size, min_freq=min_freq)
 
     def to_seq(self, sentece, seq_len, with_eos=False, with_sos=False) -> list:
@@ -243,44 +264,15 @@ class Vocab(TorchVocab):
             pickle.dump(self, f)
 
 
-# Building Vocab with text files
 class TokenVocab(Vocab):
-    def __init__(self, sourceFile, targetFile, BPE_path, max_size=None, min_freq=1):
-        self.ASTs = []
-        self.codes = []
-
+    def __init__(self, BPEObject, max_size=None,min_freq=1):
         print("Building Vocab")
-        # Note the adjustment of num_merges in BPE.
-        BPEObject = BPE.load_BPE(BPE_path)
+
         self.sorted_tokens = BPEObject.sorted_tokens
         self.tokenize_word = BPEObject.tokenize_word
         self.vocab_tokenization = BPEObject.vocab_tokenization
         counter = BPEObject.tokens_frequencies
         
-        with open(sourceFile, "r", encoding='utf-8') as f:  
-            for paths in tqdm.tqdm(f, desc="Loading Source Dataset"):
-                path = paths.split("\t")
-                path_list = []
-                for nodes in path:
-                    node_list = []
-                    for tmp in nodes.replace("|", " ").replace("\/?", "").replace("/", " / ").split():
-                        tmp = tmp + '</w>'
-                        node_list.append(tmp)
-                    if(len(node_list)>2):
-                        node_list = BPE.encode(self.vocab_tokenization,self.tokenize_word,self.sorted_tokens,texts=node_list)
-                        path_list.append(node_list)
-                self.ASTs.append(path_list)
-
-        with open(targetFile, "r", encoding='utf-8') as f:
-            for code in tqdm.tqdm(f, desc="Loading Dataset"):
-                tmp_tokens = []
-                for tmp in code.split():
-                    tmp = tmp + '</w>'
-                    tmp_tokens.append(tmp)
-
-                code = BPE.encode(self.vocab_tokenization,self.tokenize_word,self.sorted_tokens,texts=tmp_tokens)
-                self.codes.append(code)
-
         super().__init__(counter, max_size=max_size, min_freq=min_freq)
 
     def to_seq(self, sentence, seq_len=None, with_eos=False, with_sos=False, with_len=False):
@@ -324,21 +316,44 @@ def build():
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-sc", "--source_corpus_path", required=True, type=str)
-    parser.add_argument("-tc", "--target_corpus_path", required=True, type=str)
+    parser.add_argument("-c", "--corpus_path", required=True, type=str)
     parser.add_argument("-o", "--output_path", required=True, type=str)
     parser.add_argument("-s", "--vocab_size", type=int, default=None)
-    parser.add_argument("-m", "--min_freq", type=int, default=1)
-    parser.add_argument("-n", "--num_merges", type=int, default=200)
+    parser.add_argument("-f", "--min_freq", type=int, default=2)
+    parser.add_argument("-m", "--num_merges", type=int, default=5000)
     args = parser.parse_args()
 
-    # create BPE object
-    BPE_path = "data/BPEObject.small"
-    BPE(args.source_corpus_path, args.target_corpus_path, BPE_path, num_merges=args.num_merges)
-    vocab = TokenVocab(args.source_corpus_path, args.target_corpus_path, BPE_path, max_size=args.vocab_size, min_freq=args.min_freq)
+    # load type nodes
+    type_path = "data/type_list/"
+    files = os.listdir(type_path)
+    type_node = []
+    for file in files:
+        with open(type_path+file, "r", encoding='utf-8') as f:
+            s = f.read()
+            type_node += s.split()
+
+    except_list = ['False','None', 'True','and','as', 'assert','break',
+                    'class','continue', 'def','del','elif', 'else','except',
+                    'finally', 'for', 'from','global','if','import','in','is',
+                    'lambda', 'nonlocal','not','or','pass','raise', 'return',
+                    'try','while','with','yield','NEWLINE','INDENT','<mask>'] + [
+                    "abstract", "assert", "boolean", "break", "byte", "case", "catch", 
+                    "char", "class", "const", "continue", "default", "do", "double", 
+                    "else", "enum", "extends", "final", "finally", "float", "for", "goto",
+                    "if", "implements", "import", "instanceof", "int", "interface", "long", 
+                    "native", "new", "package", "private", "protected", "public", "return", 
+                    "strictfp", "short", "static", "super", "switch", "synchronized", "this", 
+                    "throw", "throws", "transient", "try", "void", "volatile", "while"]
+
+    except_list.extend(type_node)
+    # except_list include type nodes and key word in code, which do not need to adopt BPE
+    except_list = list(set(except_list))
+
+    # Create BPE object
+    BPE_object = BPE(args.corpus_path,except_list=except_list,num_merges=args.num_merges)
+    vocab = TokenVocab( BPE_object,max_size=args.vocab_size,min_freq=args.min_freq)
 
     print("VOCAB SIZE:", len(vocab))
     vocab.save_vocab(args.output_path)
 
-build()
-print("test vocab")
+# build()
